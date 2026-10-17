@@ -7,13 +7,24 @@ const { randomUUID } = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = __dirname;
-const DATA_DIRECTORY = path.join(ROOT, "data");
-const DATABASE_PATH = path.join(DATA_DIRECTORY, "aru-diary.sqlite");
-const HOST = "127.0.0.1";
+const DATABASE_PATH = path.resolve(
+  process.env.DATABASE_PATH || path.join(ROOT, "data", "aru-diary.sqlite")
+);
+const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 3000);
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const MAX_IMPORTED_ENTRIES = 5000;
 const ALLOWED_MOODS = new Set(["😊", "🥰", "😌", "🌱", "🥺", "☁️"]);
+const ALLOWED_ORIGINS = new Set(
+  [process.env.FRONTEND_ORIGIN, process.env.NETLIFY_SITE_URL]
+    .filter(Boolean)
+    .flatMap((value) => value.split(","))
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter(Boolean)
+);
+const LOCAL_ORIGINS = new Set(
+  ["127.0.0.1", "localhost"].map((host) => `http://${host}:${PORT}`)
+);
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -24,7 +35,7 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error("PORT must be a valid TCP port between 1 and 65535.");
 }
 
-fs.mkdirSync(DATA_DIRECTORY, { recursive: true });
+fs.mkdirSync(path.dirname(DATABASE_PATH), { recursive: true });
 const database = new DatabaseSync(DATABASE_PATH);
 database.exec(`
   PRAGMA journal_mode = WAL;
@@ -83,6 +94,32 @@ function sendJson(response, statusCode, payload, additionalHeaders = {}) {
     ...additionalHeaders
   });
   response.end(JSON.stringify(payload));
+}
+
+function applySecurityHeaders(response) {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("Referrer-Policy", "no-referrer");
+}
+
+function handleCors(request, response) {
+  const origin = request.headers.origin;
+  if (!origin) return true;
+  const normalizedOrigin = origin.replace(/\/+$/, "");
+  if (!ALLOWED_ORIGINS.has(normalizedOrigin) && !LOCAL_ORIGINS.has(normalizedOrigin)) {
+    sendJson(response, 403, { error: "This website is not allowed to access the journal API." });
+    return false;
+  }
+  response.setHeader("Access-Control-Allow-Origin", normalizedOrigin);
+  response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Vary", "Origin");
+  if (request.method === "OPTIONS") {
+    response.writeHead(204);
+    response.end();
+    return false;
+  }
+  return true;
 }
 
 function readJson(request) {
@@ -293,7 +330,7 @@ function serveStatic(request, response, url) {
     sendJson(response, 403, { error: "This file is not available." });
     return;
   }
-  if (!["index.html", "script.js", "style.css"].includes(path.relative(ROOT, filePath))) {
+  if (!["index.html", "script.js", "style.css", "config.js"].includes(path.relative(ROOT, filePath))) {
     sendJson(response, 404, { error: "This file does not exist." });
     return;
   }
@@ -314,6 +351,8 @@ function serveStatic(request, response, url) {
 }
 
 const server = http.createServer(async (request, response) => {
+  applySecurityHeaders(response);
+  if (!handleCors(request, response)) return;
   try {
     const url = new URL(request.url, `http://${HOST}:${PORT}`);
     const handled = await handleApi(request, response, url);
@@ -331,7 +370,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Aru's diary is ready at http://${HOST}:${PORT}`);
+  console.log(`Aru's diary API is ready at http://${HOST}:${PORT}`);
   console.log(`SQLite database: ${DATABASE_PATH}`);
 });
 

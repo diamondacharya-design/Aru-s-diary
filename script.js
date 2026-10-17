@@ -26,6 +26,7 @@
   let editingId = null;
   let toastTimer;
   let databaseReady = false;
+  const apiBaseUrl = (window.ARU_DIARY_API_URL || "").replace(/\/+$/, "");
 
   function hideLoadingScreen() {
     window.setTimeout(() => {
@@ -57,7 +58,7 @@
   }
 
   async function apiRequest(path, options = {}) {
-    const response = await fetch(path, {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
