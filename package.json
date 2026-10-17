@@ -1,0 +1,12 @@
+{
+  "name": "arus-diary",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aru's diary, a lavender personal journal backed by SQLite.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
